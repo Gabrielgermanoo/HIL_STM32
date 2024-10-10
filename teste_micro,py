@@ -1,0 +1,17 @@
+from machine import Pin
+from time import sleep
+
+# Configura o pino para o LED. O pino varia de acordo com o modelo da placa.
+# Aqui, está configurado o pino LED_BUILTIN, que é normalmente o LED embutido nas placas STM32.
+led = Pin("LED", Pin.OUT)
+
+# Função para piscar o LED
+def flash_led():
+    while True:
+        led.on()  # Liga o LED
+        sleep(0.5)  # Espera 500ms
+        led.off()  # Desliga o LED
+        sleep(0.5)  # Espera 500ms
+
+# Executa a função de piscar
+flash_led()

@@ -1,74 +1,38 @@
-import numpy as np
-from scipy.signal import StateSpace, lti
-import subprocess
-import serial
+from machine import Pin, UART
 import time
-import matplotlib.pyplot as plt
-import stm32loader
+import numpy as np
 
-serial_port = "COM1"
+uart = UART(2, baudrate=115200, tx=Pin(17), rx=Pin(16))
 
+A_d = np.array([[0.9927, 0.0071, 0.0215, 0.0008],
+                [0.0018, 0.9896, 0.0002, 0.0217],
+                [-0.6406, 0.6136, 0.9287, 0.0700],
+                [0.1570, -0.9166, 0.0175, 0.9414]])
 
-# Configurações da porta serial
-ser = serial.Serial(port=serial_port, baudrate=9600, timeout=1)
+B_d = np.array([[0.0000],
+                [0.0000],
+                [0.0043],
+                [0.0000]])
 
-def send_data(data):
-    ser.write(data.encode())
-    time.sleep(0.1)
-    print('Data sent: ' + data)
+C_d = np.array([[1, 0, 0, 0]])
+D_d = np.array([[0]])
 
-def receive_data():
-    data = ser.readline().decode('utf-8').strip()
-    print('Data received: ' + data)
-    return data
+x = np.zeros((4, 1)) 
 
-try:
-    # Verificar se a porta está aberta
-    if ser.isOpen():
-        print(ser.name + ' is open...')
+def step_response(u):
+    # Função para calcular a resposta do sistema discreto
+    global x
+    # Atualizar o estado x(k+1) = A_d * x(k) + B_d * u(k)
+    x = np.dot(A_d, x) + np.dot(B_d, u)
+    # Saída y(k) = C_d * x(k) + D_d * u(k)
+    y = np.dot(C_d, x) + np.dot(D_d, u)
+    return y
 
-    # Parâmetros do sistema
-    L = 1e-3     # Indutância (H)
-    R = 1        # Resistência (Ohms)
-    M = 0.02     # Massa (kg)
-    b1 = 4.1e-3  # Atrito (N/(m/s))
-    Km = 0.1025  # Constante do motor (N/A)
-
-    # Matrizes de estado
-    A = np.array([[0, 1],
-                  [-R*b1/(L*M), -(L*b1 + R*M)/(L*M)]])
-    
-    B = np.array([[0],
-                  [Km/(L*M)]])
-    
-    C = np.array([[1, 0]])
-    
-    D = np.array([[0]])
-
-    # Cria o sistema no espaço de estados
-    system = StateSpace(A, B, C, D)
-
-    # Definir a resposta ao degrau
-    t, y = lti(A, B, C, D).step()
-
-    # Enviar valores via serial
-    for i in range(len(t)):
-        data_to_send = f'Tempo: {t[i]:.4f}, Resposta: {y[i]:.4f}'
-        send_data(data_to_send)
-        time.sleep(0.5)  # Aguardar meio segundo entre envios para evitar sobrecarga na serial
-
-        # Opcional: Receber confirmação do dispositivo
-        response = receive_data()
-        print(response)
+while True:
+    if uart.any():
+        u = float(uart.readline().decode('utf-8').strip())
         
-    # Plota a resposta ao degrau (opcional)
-    plt.plot(t, y)
-    plt.xlabel('Tempo [s]')
-    plt.ylabel('Resposta')
-    plt.title('Resposta ao Degrau do Sistema')
-    plt.grid(True)
-    plt.show()
-
-finally:
-    ser.close()
-    print(ser.name + ' is closed...')
+        y = step_response(u)
+        
+        uart.write(str(y[0]) + '\n')  # Enviando apenas a primeira saída
+        time.sleep(0.1)  # Pequeno delay para evitar sobrecarga
