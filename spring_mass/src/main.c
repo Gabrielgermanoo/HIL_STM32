@@ -1,9 +1,3 @@
-/*
- * Copyright (c) 2022 Libre Solar Technologies GmbH
- *
- * SPDX-License-Identifier: Apache-2.0
- */
-
 #include <stdlib.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
@@ -21,15 +15,56 @@ K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
 
 static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 
+/**
+* \brief Read characters from UART until line end is detected. Afterward push the data to the message queue.
+ * \param dev
+ * \param user_data
+ */
+void serial_cb(const struct device *dev, void *user_data);
+
+/**
+ * \brief Print a null-terminated string character by character to the UART interface
+ * \param buf
+ */
+void print_uart(char *buf);
+
+/**
+ * \brief Do the multiplication operation between two matrix
+ * \param result a matrix who store the line/column operations of matrix
+ * \param matrix
+ * \param vector
+ * \param rows
+ * \param cols
+ */
+void mat_vec_mul(double *result, const double *matrix, const double *vector, int rows, int cols);
+
+/**
+ * \brief
+ * \param dx
+ * \param A
+ * \param B
+ * \param x
+ * \param u
+ * \param n
+ */
+void state_derivative(double *dx, double *A, double *B, double *x, double *u, int n);
+
+/**
+ * \brief
+ * \param x
+ * \param A
+ * \param B
+ * \param u
+ * \param h
+ * \param n
+ */
+void rk4_step(double *x, double *A, double *B, double *u, double h, int n);
+
+
 /* receive buffer used in UART ISR callback */
 static char rx_buf[MSG_SIZE];
 static int rx_buf_pos;
 
-void serial_cb(const struct device *dev, void *user_data);
-
-/*
- * Print a null-terminated string character by character to the UART interface
- */
 void print_uart(char *buf) {
     int msg_len = strlen(buf);
 
@@ -38,7 +73,7 @@ void print_uart(char *buf) {
     }
 }
 
-void mat_vec_mul(double *result, double *matrix, double *vector, int rows, int cols) {
+void mat_vec_mul(double *result, const double *matrix, const double *vector, const int rows, const int cols) {
     for (int i = 0; i < rows; ++i) {
         result[i] = 0.0;
         for (int j = 0; j < cols; ++j) {
@@ -48,11 +83,16 @@ void mat_vec_mul(double *result, double *matrix, double *vector, int rows, int c
 }
 
 void state_derivative(double *dx, double *A, double *B, double *x, double *u, int n) {
-    mat_vec_mul(dx, A, x, n, n); // dx = A * x
+    mat_vec_mul(dx, A, x, n, n);
+
     double Bu[n];
-    mat_vec_mul(Bu, B, u, n, 1); // Bu = B * u
+
+    mat_vec_mul(Bu, B, u, n, 1);
     for (int i = 0; i < n; ++i) {
-        dx[i] += Bu[i]; // dx = A * x + B * u
+        /**
+         * Make this operation: dx = A * x + B * u
+         */
+        dx[i] += Bu[i];
     }
 }
 
@@ -92,26 +132,37 @@ void rk4_step(double *x, double *A, double *B, double *u, double h, int n) {
         k4[i] *= h;
     }
 
-    // Atualização do estado: x = x + (1/6) * (k1 + 2*k2 + 2*k3 + k4)
+    /**
+     * update of state: x = x + (1/6) * (k1 + 2*k2 + 2*k3 + k4)
+     */
     for (int i = 0; i < n; ++i) {
         x[i] += (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i]) / 6.0;
     }
 }
 
+void spring_mass(double *x, double *A, double *B, double *u, const double h, const int n) {
+    for (int i = 0; i < 20000; ++i) {
+        rk4_step(x, A, B, u, h, n);
+        printk("%f %f %f %f \n", x[0], x[1], x[2], x[3]);
+    }
+}
 
 int main(void) {
     char tx_buf[MSG_SIZE];
-    int n = 4; // Número de estados
+    /**
+     * Number of states
+     */
+    int n = 4;
     double A[16] = {
         0.0, 0.0, 1.0, 0.0,
         0.0, 0.0, 0.0, 1.0,
         -30.0, 30.0, -3.0, 3.0,
         7.5, -42.5, 0.75, -2.25
     }; // Matriz A (4x4)
-    double B[4] = {0.0, 0.0, 0.2, 0.0}; // Matriz B (4x1)
-    double u[1] = {100.0}; // Entrada do sistema
-    double x[4] = {0.1, 0.0, 0.0, 0.0}; // Estado inicial
-    double h = 0.001; // Passo de integração
+    double B[4] = {0.0, 0.0, 0.2, 0.0};
+    double u[1] = {100.0};
+    double x[4] = {0.1, 0.0, 0.0, 0.0};
+    double h = 0.001;
 
     if (!device_is_ready(uart_dev)) {
         printk("UART device not found!");
@@ -131,22 +182,14 @@ int main(void) {
         }
         return 0;
     }
-    uart_irq_rx_enable(uart_dev);
-
+    
     int i = 0;
-    while(1) {
-        rk4_step(x, A, B, u, h, n);
-        printk("%f %f %f %f \n", x[0], x[1], x[2], x[3]);
-        i++;
-    }
+
+    spring_mass(x, A, B, u, h, n);
 
     return 0;
 }
 
-/*
- * Read characters from UART until line end is detected. Afterwards push the
- * data to the message queue.
- */
 void serial_cb(const struct device *dev, void *user_data) {
     uint8_t c;
     double *u = (double *) user_data;
