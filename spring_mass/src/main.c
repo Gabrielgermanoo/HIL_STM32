@@ -25,11 +25,51 @@ static const struct device *const uart_dev = DEVICE_DT_GET(UART_DEVICE_NODE);
 static char rx_buf[MSG_SIZE];
 static int rx_buf_pos;
 
+/**
+* \brief Read characters from UART until line end is detected. Afterward push the data to the message queue.
+ * \param dev device used for the callback
+ * \param user_data pointer to the variable that will store the received data
+ */
 void serial_cb(const struct device *dev, void *user_data);
 
-/*
- * Print a null-terminated string character by character to the UART interface
+/**
+ * \brief Print a null-terminated string character by character to the UART interface
+ * \param buf buffer containing the string to be printed
  */
+void print_uart(char *buf);
+
+/**
+ * \brief Operation to multiply the matrix by the vector
+ * \param result vector to store the result of the operation
+ * \param matrix matrix to be multiplied
+ * \param vector vector to be multiplied
+ * \param rows number of rows of the matrix
+ * \param cols number of columns of the matrix
+ */
+void mat_vec_mul(double *result, const double *matrix, const double *vector, const int rows, const int cols);
+
+/**
+ * \brief der
+ * \param dx 
+ * \param A 
+ * \param B 
+ * \param x 
+ * \param u 
+ * \param n 
+ */
+void state_derivative(double *dx, double *A, double *B, double *x, double *u, int n);
+
+/**
+ * \brief 
+ * \param x
+ * \param A 
+ * \param B 
+ * \param u 
+ * \param h 
+ * \param n 
+ */
+void rk4_step(double *x, double *A, double *B, double *u, double h, int n);
+
 void print_uart(char *buf) {
     int msg_len = strlen(buf);
 
@@ -38,7 +78,41 @@ void print_uart(char *buf) {
     }
 }
 
-void mat_vec_mul(double *result, double *matrix, double *vector, int rows, int cols) {
+void serial_cb(const struct device *dev, void *user_data) {
+    uint8_t c;
+    double *u = (double *) user_data;
+
+    if (!uart_irq_update(uart_dev)) {
+        return;
+    }
+
+    if (!uart_irq_rx_ready(uart_dev)) {
+        return;
+    }
+
+    /* read until FIFO empty */
+    while (uart_fifo_read(uart_dev, &c, 1) == 1) {
+        if ((c == '\n' || c == '\r') && rx_buf_pos > 0) {
+            /* terminate string */
+            rx_buf[rx_buf_pos] = '\0';
+
+            /* if queue is full, message is silently dropped */
+            k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
+
+            /* reset the buffer (it was copied to the msgq) */
+            rx_buf_pos = 0;
+
+            double new_u = atof(rx_buf);
+            u[0] = new_u;
+
+        } else if (rx_buf_pos < (sizeof(rx_buf) - 1)) {
+            rx_buf[rx_buf_pos++] = c;
+        }
+        /* else: characters beyond buffer size are dropped */
+    }
+}
+
+void mat_vec_mul(double *result, const double *matrix, const double *vector, const int rows, const int cols) {
     for (int i = 0; i < rows; ++i) {
         result[i] = 0.0;
         for (int j = 0; j < cols; ++j) {
@@ -98,6 +172,13 @@ void rk4_step(double *x, double *A, double *B, double *u, double h, int n) {
     }
 }
 
+void spring_mass(double *x, double *A, double *B, double *u, const double h, const int n) {
+    for (int i = 0; i < 10000; ++i) {
+        rk4_step(x, A, B, u, h, n);
+        printk("%f %f %f %f \n", x[0], x[1], x[2], x[3]);
+    }
+    print_uart("End of simulation!");
+}
 
 int main(void) {
     char tx_buf[MSG_SIZE];
@@ -133,50 +214,18 @@ int main(void) {
     }
     uart_irq_rx_enable(uart_dev);
 
-    int i = 0;
-    while(1) {
-        rk4_step(x, A, B, u, h, n);
-        printk("%f %f %f %f \n", x[0], x[1], x[2], x[3]);
-        i++;
+    while(k_msgq_get(&uart_msgq, &tx_buf, K_FOREVER) == 0) {
+        print_uart(tx_buf);
+        switch (rx_buf[0]) {
+            case 's':
+                spring_mass(x, A, B, u, h, n);
+                k_msgq_cleanup(&uart_msgq);
+                break;
+            default:
+                print_uart("Unrecognized command\n");
+                break;
+        }
     }
 
     return 0;
-}
-
-/*
- * Read characters from UART until line end is detected. Afterwards push the
- * data to the message queue.
- */
-void serial_cb(const struct device *dev, void *user_data) {
-    uint8_t c;
-    double *u = (double *) user_data;
-
-    if (!uart_irq_update(uart_dev)) {
-        return;
-    }
-
-    if (!uart_irq_rx_ready(uart_dev)) {
-        return;
-    }
-
-    /* read until FIFO empty */
-    while (uart_fifo_read(uart_dev, &c, 1) == 1) {
-        if ((c == '\n' || c == '\r') && rx_buf_pos > 0) {
-            /* terminate string */
-            rx_buf[rx_buf_pos] = '\0';
-
-            /* if queue is full, message is silently dropped */
-            k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT);
-
-            /* reset the buffer (it was copied to the msgq) */
-            rx_buf_pos = 0;
-
-            double new_u = atof(rx_buf);
-            u[0] = new_u;
-
-        } else if (rx_buf_pos < (sizeof(rx_buf) - 1)) {
-            rx_buf[rx_buf_pos++] = c;
-        }
-        /* else: characters beyond buffer size are dropped */
-    }
 }
