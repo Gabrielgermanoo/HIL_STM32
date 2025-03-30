@@ -1,16 +1,20 @@
-#include "zephyr/sys/printk.h"
 #include <stdlib.h>
+#include <string.h>
+
 #include <zephyr/device.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-
-#include <string.h>
+#include <zephyr/sys/reboot.h>
 
 /* change this to any other UART peripheral if desired */
 #define UART_DEVICE_NODE DT_CHOSEN(zephyr_shell_uart)
 
 #define MSG_SIZE 32
+
+#define SIMULATION_TIME 10000
+
+#define SIMULATION_STEP 0.001
 
 /* queue to store up to 10 messages (aligned to 4-byte boundary) */
 K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
@@ -59,6 +63,15 @@ void state_derivative(double *dx, double *A, double *B, double *x, double *u, in
  */
 void rk4_step(double *x, double *A, double *B, double *u, double h, int n);
 
+
+static void reset_system_handler(struct k_work *work) {
+    k_msleep(2000);
+
+    sys_reboot(SYS_REBOOT_COLD);
+}
+
+
+K_WORK_DEFINE(reset_system, reset_system_handler);
 
 /* receive buffer used in UART ISR callback */
 static char rx_buf[MSG_SIZE];
@@ -137,7 +150,7 @@ void rk4_step(double *x, double *A, double *B, double *u, double h, int n) {
 
 void spring_mass(double *x, double *A, double *B, double *u, const double h, const int n) {
     printk("Spring mass simulation started.\n");
-      for (int i = 0; i < 20000; ++i) {
+      for (int i = 0; i < SIMULATION_TIME; ++i) {
         rk4_step(x, A, B, u, h, n);
         printk("%f %f %f %f %f %f \n", (double)x[0], (double)x[1], (double)x[2], (double)x[3], (double)x[4], (double)x[5]);
       }
@@ -157,7 +170,7 @@ int main(void) {
     double B[6] = {0.0, 0.0, 0.0, 1.4045, 0.000, 0.00};
     double u[1] = {100};
     double x[6] = {0.1, 0.0, 0.0, 0.0, 0.0, 0.0};
-    double h = 0.001;
+    double h = SIMULATION_STEP;
 
     if (!device_is_ready(uart_dev)) {
         LOG_DBG("UART device not found!");
@@ -205,8 +218,27 @@ int main(void) {
     // }
     int i = 0;
     while(1) {
+        if (i > SIMULATION_TIME) {
+            break;
+        }
+        // Verify the input obtained from the UART
+        if (k_msgq_get(&uart_msgq, &rx_buf, K_NO_WAIT) == 0) {
+            rx_buf_pos = strlen(rx_buf);
+            if (rx_buf_pos == 0) {
+                continue;
+            }
+            double new_u = atof(rx_buf);
+            u[0] = new_u;
+            memset(rx_buf, 0, sizeof(rx_buf));
+        }
+        // reset the system if the input is 0
+        if (u[0] == 0) {
+            print_uart("Resetting system...\n");
+            k_work_submit(&reset_system);
+            break;
+        }
         rk4_step(x, A, B, u, h, n);
-        printk("passo: %d | %f %f %f \n", i, x[0], x[1], x[2]);
+        printk("%f %f %f\n", x[0], x[1], x[2]);
         i++;
     }
 
