@@ -1,5 +1,5 @@
 % Configuração da comunicação serial com serialport
-serialPort = 'COM9'; % Modifique para o nome correto da porta serial
+serialPort = 'COM9';
 baudRate = 115200;
 s = serialport(serialPort, baudRate);
 
