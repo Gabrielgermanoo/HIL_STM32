@@ -1,4 +1,3 @@
-
 % Definir as matrizes do sistema contínuo
 
 c1 = 80;

@@ -16,8 +16,8 @@
 
 #define SIMULATION_STEP 0.001
 
-/* queue to store up to 10 messages (aligned to 4-byte boundary) */
-K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 10, 4);
+/* queue to store up to 50 messages (aligned to 4-byte boundary) */
+K_MSGQ_DEFINE(uart_msgq, MSG_SIZE, 2000, 4);
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
@@ -152,7 +152,6 @@ void spring_mass(double *x, double *A, double *B, double *u, const double h, con
     printk("Spring mass simulation started.\n");
       for (int i = 0; i < SIMULATION_TIME; ++i) {
         rk4_step(x, A, B, u, h, n);
-        printk("%f %f %f %f %f %f \n", (double)x[0], (double)x[1], (double)x[2], (double)x[3], (double)x[4], (double)x[5]);
       }
 }
 
@@ -218,9 +217,6 @@ int main(void) {
     // }
     int i = 0;
     while(1) {
-        if (i > SIMULATION_TIME) {
-            break;
-        }
         // Verify the input obtained from the UART
         if (k_msgq_get(&uart_msgq, &rx_buf, K_NO_WAIT) == 0) {
             rx_buf_pos = strlen(rx_buf);
@@ -231,8 +227,9 @@ int main(void) {
             u[0] = new_u;
             memset(rx_buf, 0, sizeof(rx_buf));
         }
+
         // reset the system if the input is 0
-        if (u[0] == 0) {
+        if (u[0] == '0') {
             print_uart("Resetting system...\n");
             k_work_submit(&reset_system);
             break;
@@ -240,6 +237,7 @@ int main(void) {
         rk4_step(x, A, B, u, h, n);
         printk("%f %f %f\n", x[0], x[1], x[2]);
         i++;
+        k_sleep(K_MSEC(1));
     }
 
     return 0;
@@ -263,13 +261,6 @@ void serial_cb(const struct device *dev, void *user_data) {
             /* terminate string */
             rx_buf[rx_buf_pos] = '\0';
 
-            LOG_DBG("Received: %s", rx_buf);
-
-            /* if queue is full, message is silently dropped */
-            if (k_msgq_put(&uart_msgq, &rx_buf, K_NO_WAIT) != 0) {
-                LOG_ERR("Message queue full, dropping data");
-            }
-
             /* reset the buffer (it was copied to the msgq) */
             rx_buf_pos = 0;
 
@@ -278,9 +269,6 @@ void serial_cb(const struct device *dev, void *user_data) {
 
         } else if (rx_buf_pos < (sizeof(rx_buf) - 1)) {
             rx_buf[rx_buf_pos++] = c;
-        } else {
-            LOG_ERR("Buffer overflow, dropping character");
         }
-        /* else: characters beyond buffer size are dropped */
     }
 }

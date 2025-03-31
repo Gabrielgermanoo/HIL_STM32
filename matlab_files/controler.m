@@ -76,7 +76,7 @@ for i = 1:length(time)
     control_position_data(i) = control_position;
     control_velocity_data(i) = control_velocity;
 end
-
+%%
 % Limpe o objeto serial para fechar a conexão
 clear s;
 
